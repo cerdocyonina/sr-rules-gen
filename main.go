@@ -16,7 +16,6 @@ import (
 func geositeRuleToSrRule(rule *routercommon.Domain) string {
 	var srStrategy string
 
-	// TODO: check all enum values are covered?
 	switch rule.Type {
 	case routercommon.Domain_Plain:
 		srStrategy = "DOMAIN-KEYWORD"
@@ -62,6 +61,8 @@ func processCategory(category *routercommon.GeoSite) {
 	fmt.Printf("processed category %v in %v\n", category.CountryCode, time.Since(t0))
 }
 
+const WORKERS_COUNT = 8
+
 func main() {
 	// resp, err := http.Get("https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat")
 	// if err != nil {
@@ -86,16 +87,28 @@ func main() {
 	}
 	fmt.Println("parsed geosite")
 
-	err = os.Mkdir("output", 0700)
+	err = os.MkdirAll("output", 0700)
 	wg := sync.WaitGroup{}
 	t0 := time.Now()
-	for _, entry := range geositeList.GetEntry() {
+
+	jobs := make(chan *routercommon.GeoSite, 128) // test limited channel size
+
+	for i := 0; i < WORKERS_COUNT; i++ {
 		wg.Add(1)
-		go func(s *routercommon.GeoSite) {
+		go func(jobs chan *routercommon.GeoSite) {
 			defer wg.Done()
-			processCategory(s)
-		}(entry)
+			for s := range jobs {
+				processCategory(s)
+			}
+		}(jobs)
 	}
+
+	for _, entry := range geositeList.GetEntry() {
+		jobs <- entry
+	}
+
+	close(jobs)
+
 	wg.Wait()
 	fmt.Printf("finished in %vms\n", time.Since(t0).Milliseconds())
 }
