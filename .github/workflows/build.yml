@@ -1,0 +1,58 @@
+name: Build and Release Rules
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Build
+        run: |
+          go build -o gen-rules main.go
+
+      - name: Run script
+        run: |
+          mkdir -p dist/geosite dist/geoip
+          ./gen-rules -geosite-dir dist/geosite -geoip-dir dist/geoip
+
+      # - name: Archive rules
+      #   run: |
+      #     cd dist
+      #     zip -r ../geosite-rules.zip geosite/
+      #     zip -r ../geoip-rules.zip geoip/
+      #     cd ..
+
+      # Deploy
+      # 1. release branch
+      - name: Deploy to release branch
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: release
+          publish_dir: ./dist
+          force_orphan: true
+
+      # 2. github release
+      # - name: Update Latest Release
+      #   uses: softprops/action-gh-release@v1
+      #   with:
+      #     tag_name: latest
+      #     name: "Latest Rules"
+      #     body: "Automatically generated rules. Use 'release' branch for direct URLs."
+      #     files: |
+      #       geosite-rules.zip
+      #       geoip-rules.zip
