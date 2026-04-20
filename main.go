@@ -2,8 +2,11 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -36,9 +39,9 @@ func geoipRuleToSrRule(rule *routercommon.CIDR) string {
 	return "IP-CIDR," + net.IP(rule.Ip).String() + "/" + fmt.Sprintf("%d", rule.Prefix)
 }
 
-func processGeositeCategory(category *routercommon.GeoSite) {
+func processGeositeCategory(category *routercommon.GeoSite, outdir string) {
 	fileName := fmt.Sprintf("%v.list", strings.ToLower(category.CountryCode))
-	file, err := os.Create(path.Join("output", "geosite", fileName))
+	file, err := os.Create(path.Join(outdir, fileName))
 	if err != nil {
 		fmt.Printf("failed create file for category %v: %v", category.CountryCode, err)
 		return
@@ -60,9 +63,9 @@ func processGeositeCategory(category *routercommon.GeoSite) {
 	}
 }
 
-func processGeoipCategory(category *routercommon.GeoIP) {
+func processGeoipCategory(category *routercommon.GeoIP, outdir string) {
 	fileName := fmt.Sprintf("%v.list", strings.ToLower(category.CountryCode))
-	file, err := os.Create(path.Join("output", "geoip", fileName))
+	file, err := os.Create(path.Join(outdir, fileName))
 	if err != nil {
 		fmt.Printf("failed create file for category %v: %v", category.CountryCode, err)
 		return
@@ -84,44 +87,27 @@ func processGeoipCategory(category *routercommon.GeoIP) {
 	}
 }
 
-const WORKERS_COUNT = 8
-
-func processGeosite() {
-	// resp, err := http.Get("https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat")
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// defer resp.Body.Close()
-
-	// fmt.Println("downloading geosite...")
-	// bodyBytes, err := io.ReadAll(resp.Body)
-	// fmt.Printf("read %d bytes (%.2fM)\n", len(bodyBytes), float64(len(bodyBytes))/1024/1024
-
-	bodyBytes, err := os.ReadFile("temp/geosite.dat")
-	if err != nil {
-		panic(err)
-	}
-
+func processGeosite(data []byte, outdir string, workers int) {
 	fmt.Println("parsing geosite...")
 	geositeList := &routercommon.GeoSiteList{}
-	err = proto.Unmarshal(bodyBytes, geositeList)
+	err := proto.Unmarshal(data, geositeList)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println("parsed geosite")
 
-	err = os.MkdirAll(path.Join("output", "geosite"), 0700)
+	err = os.MkdirAll(outdir, 0755)
 	wg := sync.WaitGroup{}
 	t0 := time.Now()
 
 	jobs := make(chan *routercommon.GeoSite, 128) // test limited channel size
 
-	for i := 0; i < WORKERS_COUNT; i++ {
+	for range workers {
 		wg.Add(1)
 		go func(jobs chan *routercommon.GeoSite) {
 			defer wg.Done()
 			for s := range jobs {
-				processGeositeCategory(s)
+				processGeositeCategory(s, outdir)
 			}
 		}(jobs)
 	}
@@ -136,42 +122,27 @@ func processGeosite() {
 	fmt.Printf("finished in %vms\n", time.Since(t0).Milliseconds())
 }
 
-func processGeoip() {
-	// resp, err := http.Get("https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat")
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// defer resp.Body.Close()
-
-	// fmt.Println("downloading geoip...")
-	// bodyBytes, err := io.ReadAll(resp.Body)
-	// fmt.Printf("read %d bytes (%.2fM)\n", len(bodyBytes), float64(len(bodyBytes))/1024/1024
-
-	bodyBytes, err := os.ReadFile("temp/geoip.dat")
-	if err != nil {
-		panic(err)
-	}
-
+func processGeoip(data []byte, outdir string, workers int) {
 	fmt.Println("parsing geoip...")
 	geoipList := &routercommon.GeoIPList{}
-	err = proto.Unmarshal(bodyBytes, geoipList)
+	err := proto.Unmarshal(data, geoipList)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println("parsed geoip")
 
-	err = os.MkdirAll(path.Join("output", "geoip"), 0700)
+	err = os.MkdirAll(outdir, 0755)
 	wg := sync.WaitGroup{}
 	t0 := time.Now()
 
 	jobs := make(chan *routercommon.GeoIP, 128) // test limited channel size
 
-	for range WORKERS_COUNT {
+	for range workers {
 		wg.Add(1)
 		go func(jobs chan *routercommon.GeoIP) {
 			defer wg.Done()
 			for s := range jobs {
-				processGeoipCategory(s)
+				processGeoipCategory(s, outdir)
 			}
 		}(jobs)
 	}
@@ -186,7 +157,66 @@ func processGeoip() {
 	fmt.Printf("finished in %vms\n", time.Since(t0).Milliseconds())
 }
 
+func readData(url string) ([]byte, error) {
+	var res []byte
+	var err error
+
+	if strings.HasPrefix(strings.ToLower(url), "http://") || strings.HasPrefix(strings.ToLower(url), "https://") {
+		// try to resolve as url
+		resp, err := http.Get(url)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+
+		res, err = io.ReadAll(resp.Body)
+	} else {
+		// try to resolve as path
+		res, err = os.ReadFile(url)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("read %d bytes (%.2fM) from %s\n", len(res), float64(len(res))/1024/1024, url)
+	return res, err
+}
+
 func main() {
-	processGeosite()
-	processGeoip()
+	var workerCount int
+	var geositeDir string
+	var geoipDir string
+	var geositePath string
+	var geoipPath string
+
+	flag.IntVar(&workerCount, "workers", 8, "workers count to use")
+	flag.StringVar(&geositeDir, "geosite-dir", "dist/geosite", "geosite output directory")
+	flag.StringVar(&geoipDir, "geoip-dir", "dist/geoip", "geoip output directory")
+	flag.StringVar(&geositePath, "geosite-url", "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat", "geosite file path/url")
+	flag.StringVar(&geoipPath, "geoip-url", "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat", "geoip file path/url")
+	flag.Parse()
+
+	if workerCount <= 0 {
+		fmt.Println("worker count must be positive")
+		return
+	}
+
+	if workerCount > 4096 {
+		fmt.Println("you sure you need this many?")
+		return
+	}
+
+	data, err := readData(geositePath)
+	if err == nil {
+		processGeosite(data, geositeDir, workerCount)
+	} else {
+		fmt.Printf("geosite failed: %v\n", err)
+	}
+
+	data, err = readData(geoipPath)
+	if err == nil {
+		processGeoip(data, geoipDir, workerCount)
+	} else {
+		fmt.Printf("geoip failed: %v\n", err)
+	}
 }
