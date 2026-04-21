@@ -4,8 +4,8 @@
 
 в этой репе настроен воркфлоу, который регулярно подтягивает и парсит файлы с https://github.com/runetfreedom/russia-v2ray-rules-dat и генерирует списки в ветке [release](https://github.com/cerdocyonina/sr-rules-gen/tree/release):
 
-- [sr-geosite.txt](https://github.com/cerdocyonina/sr-rules-gen/tree/release/geosite)
-- [sr-geoip.txt](https://github.com/cerdocyonina/sr-rules-gen/tree/release/geoip)
+- [geosite](https://github.com/cerdocyonina/sr-rules-gen/tree/release/geosite)
+- [geoip](https://github.com/cerdocyonina/sr-rules-gen/tree/release/geoip)
 
 ## использование в ShadowRocket
 
