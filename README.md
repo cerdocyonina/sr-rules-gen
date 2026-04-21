@@ -56,5 +56,5 @@ RULE-SET,https://raw.githubusercontent.com/cerdocyonina/sr-rules-gen/release/geo
     ./gen-rules -geosite-dir ./geosite -geoip-dir ./geoip
     ```
 
-  > создаст полный путь к директории, если не существует (типа mkdir -p)
+    > создаст полный путь к директории, если не существует (типа mkdir -p)
 
